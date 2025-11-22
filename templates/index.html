@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ML Pipeline Dashboard - Pneumonia Detection</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .nav {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .nav-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5rem;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            color: #666;
+            font-weight: 500;
+        }
+
+        .metric-value {
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        .status-offline {
+            background: #ef4444;
+            box-shadow: 0 0 10px #ef4444;
+        }
+
+        .chart-container {
+            height: 300px;
+            margin-top: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .recent-predictions {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .prediction-item {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .prediction-item:hover {
+            background: #f9f9f9;
+        }
+
+        .prediction-label {
+            font-weight: bold;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+
+        .prediction-normal {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .prediction-pneumonia {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .confidence-bar {
+            width: 100%;
+            height: 8px;
+            background: #eee;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏥 ML Pipeline Dashboard</h1>
+            <p class="subtitle">Pneumonia Detection from Chest X-Rays</p>
+
+            <div class="nav">
+                <a href="/" class="nav-btn">Dashboard</a>
+                <a href="/predict-page" class="nav-btn">Make Prediction</a>
+                <a href="/visualize" class="nav-btn">Visualizations</a>
+                <a href="/retrain-page" class="nav-btn">Retrain Model</a>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Model Status Card -->
+            <div class="card">
+                <h2>📊 Model Status</h2>
+                <div id="modelStatus" class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading...</p>
+                </div>
+            </div>
+
+            <!-- Performance Metrics Card -->
+            <div class="card">
+                <h2>⚡ Performance Metrics</h2>
+                <div id="performanceMetrics" class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading...</p>
+                </div>
+            </div>
+
+            <!-- System Info Card -->
+            <div class="card">
+                <h2>💻 System Information</h2>
+                <div id="systemInfo" class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Predictions Card -->
+        <div class="card">
+            <h2>📋 Recent Predictions</h2>
+            <div id="recentPredictions" class="loading">
+                <div class="spinner"></div>
+                <p>Loading...</p>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="dashboard-grid" style="margin-top: 30px;">
+            <div class="card">
+                <h2>📈 Prediction Distribution</h2>
+                <div class="chart-container">
+                    <canvas id="distributionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>⏱️ Response Time Trend</h2>
+                <div class="chart-container">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Auto-refresh interval
+        const REFRESH_INTERVAL = 5000; // 5 seconds
+
+        // Fetch and update metrics
+        async function updateMetrics() {
+            try {
+                const response = await fetch('/metrics');
+                const data = await response.json();
+
+                document.getElementById('modelStatus').innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">
+                            <span class="status-indicator status-online"></span>Status
+                        </span>
+                        <span class="metric-value">Online</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Uptime</span>
+                        <span class="metric-value">${data.uptime_formatted}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Total Predictions</span>
+                        <span class="metric-value">${data.total_predictions.toLocaleString()}</span>
+                    </div>
+                `;
+
+                document.getElementById('performanceMetrics').innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Avg Latency</span>
+                        <span class="metric-value">${data.avg_latency_ms} ms</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Success Rate</span>
+                        <span class="metric-value">${data.success_rate}%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Errors</span>
+                        <span class="metric-value">${data.total_errors}</span>
+                    </div>
+                `;
+
+                document.getElementById('systemInfo').innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Model Version</span>
+                        <span class="metric-value">1.2</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Framework</span>
+                        <span class="metric-value">TensorFlow</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Last Updated</span>
+                        <span class="metric-value">${new Date().toLocaleDateString()}</span>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error fetching metrics:', error);
+            }
+        }
+
+        // Fetch and display recent predictions
+        async function updatePredictions() {
+            try {
+                const response = await fetch('/predictions-log');
+                const data = await response.json();
+
+                if (data.predictions.length === 0) {
+                    document.getElementById('recentPredictions').innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No predictions yet</p>';
+                    return;
+                }
+
+                const html = data.predictions.slice(-10).reverse().map(pred => `
+                    <div class="prediction-item">
+                        <div>
+                            <span class="prediction-label prediction-${pred.prediction.toLowerCase()}">${pred.prediction}</span>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: ${pred.confidence * 100}%"></div>
+                            </div>
+                            <small style="color: #999;">${new Date(pred.timestamp).toLocaleTimeString()}</small>
+                        </div>
+                        <div style="text-align: right;">
+                            <strong>${(pred.confidence * 100).toFixed(1)}%</strong><br>
+                            <small style="color: #999;">${pred.latency_ms.toFixed(0)}ms</small>
+                        </div>
+                    </div>
+                `).join('');
+
+                document.getElementById('recentPredictions').innerHTML = `<div class="recent-predictions">${html}</div>`;
+            } catch (error) {
+                console.error('Error fetching predictions:', error);
+            }
+        }
+
+        // Initialize charts
+        let distributionChart, latencyChart;
+
+        function initCharts() {
+            const distributionCtx = document.getElementById('distributionChart').getContext('2d');
+            distributionChart = new Chart(distributionCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['NORMAL', 'PNEUMONIA'],
+                    datasets: [{
+                        data: [0, 0],
+                        backgroundColor: ['#10b981', '#ef4444']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+
+            const latencyCtx = document.getElementById('latencyChart').getContext('2d');
+            latencyChart = new Chart(latencyCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Latency (ms)',
+                        data: [],
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update charts
+        async function updateCharts() {
+            try {
+                const response = await fetch('/visualization-data');
+                const data = await response.json();
+
+                // Update distribution chart
+                if (data.prediction_distribution) {
+                    distributionChart.data.datasets[0].data = [
+                        data.prediction_distribution.NORMAL || 0,
+                        data.prediction_distribution.PNEUMONIA || 0
+                    ];
+                    distributionChart.update();
+                }
+
+                // Update latency chart
+                if (data.latency_data && data.latency_data.length > 0) {
+                    const recent = data.latency_data.slice(-20);
+                    latencyChart.data.labels = recent.map((_, i) => i + 1);
+                    latencyChart.data.datasets[0].data = recent;
+                    latencyChart.update();
+                }
+            } catch (error) {
+                console.error('Error updating charts:', error);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initCharts();
+            updateMetrics();
+            updatePredictions();
+            updateCharts();
+
+            // Auto-refresh
+            setInterval(() => {
+                updateMetrics();
+                updatePredictions();
+                updateCharts();
+            }, REFRESH_INTERVAL);
+        });
+    </script>
+</body>
+</html>

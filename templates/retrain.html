@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Retraining - ML Pipeline</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .nav {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+
+        .nav-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: transform 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 30px;
+            position: relative;
+        }
+
+        .step {
+            flex: 1;
+            text-align: center;
+            padding: 20px 10px;
+            background: #f8f9ff;
+            border-radius: 10px;
+            margin: 0 5px;
+            position: relative;
+            transition: all 0.3s;
+        }
+
+        .step.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .step.completed {
+            background: #10b981;
+            color: white;
+        }
+
+        .step-number {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .step-title {
+            font-size: 0.9rem;
+        }
+
+        .upload-section {
+            margin-bottom: 30px;
+        }
+
+        .class-selector {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .class-btn {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #667eea;
+            background: white;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 1rem;
+        }
+
+        .class-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #764ba2;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 20px 0;
+        }
+
+        .upload-area:hover {
+            background: #f8f9ff;
+            border-color: #764ba2;
+        }
+
+        .upload-area.dragover {
+            background: #e8ecff;
+            border-color: #5a67d8;
+        }
+
+        .file-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 20px 0;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #f8f9ff;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .file-item .remove-btn {
+            color: #ef4444;
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s;
+            display: inline-block;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #666;
+        }
+
+        .config-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .config-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .config-item label {
+            color: #666;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .config-item input {
+            padding: 10px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+
+        .status-box {
+            display: none;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .status-box.info {
+            background: #dbeafe;
+            border: 2px solid #3b82f6;
+            color: #1e40af;
+        }
+
+        .status-box.success {
+            background: #d1fae5;
+            border: 2px solid #10b981;
+            color: #065f46;
+        }
+
+        .status-box.error {
+            background: #fee2e2;
+            border: 2px solid #ef4444;
+            color: #991b1b;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e5e7eb;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .info-box {
+            background: #f8f9ff;
+            padding: 15px;
+            border-left: 4px solid #667eea;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔄 Model Retraining</h1>
+            <p style="color: #666; margin-top: 5px;">Upload new training data and retrain the model</p>
+            <div class="nav">
+                <a href="/" class="nav-btn">Dashboard</a>
+                <a href="/predict-page" class="nav-btn">Prediction</a>
+                <a href="/visualize" class="nav-btn">Visualizations</a>
+                <a href="/retrain-page" class="nav-btn">Retrain Model</a>
+            </div>
+        </div>
+
+        <!-- Step Indicator -->
+        <div class="step-indicator">
+            <div class="step active" id="step1">
+                <div class="step-number">1</div>
+                <div class="step-title">Upload Data</div>
+            </div>
+            <div class="step" id="step2">
+                <div class="step-number">2</div>
+                <div class="step-title">Configure</div>
+            </div>
+            <div class="step" id="step3">
+                <div class="step-number">3</div>
+                <div class="step-title">Retrain</div>
+            </div>
+        </div>
+
+        <!-- Step 1: Upload Data -->
+        <div class="card" id="uploadCard">
+            <h2>📤 Step 1: Upload Training Data</h2>
+
+            <div class="info-box">
+                <strong>💡 Instructions:</strong><br>
+                1. Select image class (NORMAL or PNEUMONIA)<br>
+                2. Upload multiple X-ray images (JPEG/PNG)<br>
+                3. Images will be saved to database and preprocessed automatically<br>
+                4. Repeat for both classes if needed
+            </div>
+
+            <div class="class-selector">
+                <button class="class-btn active" onclick="selectClass('NORMAL')" id="normalBtn">
+                    ✅ NORMAL
+                </button>
+                <button class="class-btn" onclick="selectClass('PNEUMONIA')" id="pneumoniaBtn">
+                    🩺 PNEUMONIA
+                </button>
+            </div>
+
+            <div class="upload-area" id="uploadArea">
+                <div style="font-size: 3rem; margin-bottom: 15px;">📁</div>
+                <p style="font-size: 1.2rem; margin-bottom: 10px;">
+                    <strong>Click to upload</strong> or drag and drop
+                </p>
+                <p style="color: #666;">
+                    Supports: JPEG, PNG • Multiple files allowed
+                </p>
+                <input type="file" id="fileInput" multiple accept="image/jpeg,image/jpg,image/png" style="display: none;">
+            </div>
+
+            <div id="fileList" class="file-list"></div>
+
+            <div style="text-align: center;">
+                <button class="btn" onclick="uploadFiles()" id="uploadBtn" disabled>
+                    ⬆️ Upload to Database
+                </button>
+                <button class="btn btn-secondary" onclick="clearFiles()">
+                    🗑️ Clear
+                </button>
+            </div>
+
+            <div class="status-box" id="uploadStatus"></div>
+
+            <div style="text-align: center; margin-top: 30px;">
+                <button class="btn" onclick="goToStep2()" id="nextStep1Btn" disabled>
+                    Next: Configure Training →
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: Configure Training -->
+        <div class="card" id="configCard" style="display: none;">
+            <h2>⚙️ Step 2: Configure Training Parameters</h2>
+
+            <div class="info-box">
+                <strong>🎯 About Retraining:</strong><br>
+                This process uses <strong>Transfer Learning</strong> with your existing trained model as a pre-trained base.
+                The model will be fine-tuned on your newly uploaded data.
+            </div>
+
+            <div class="config-section">
+                <div class="config-item">
+                    <label>Number of Epochs</label>
+                    <input type="number" id="epochs" value="10" min="5" max="50">
+                    <small style="color: #666; margin-top: 5px;">Recommended: 10-15 for fine-tuning</small>
+                </div>
+                <div class="config-item">
+                    <label>Batch Size</label>
+                    <input type="number" id="batchSize" value="32" min="8" max="64" step="8">
+                    <small style="color: #666; margin-top: 5px;">Recommended: 32</small>
+                </div>
+            </div>
+
+            <div style="text-align: center; margin-top: 30px;">
+                <button class="btn btn-secondary" onclick="goToStep1()">
+                    ← Back
+                </button>
+                <button class="btn" onclick="goToStep3()">
+                    Next: Start Retraining →
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 3: Retraining -->
+        <div class="card" id="retrainCard" style="display: none;">
+            <h2>🚀 Step 3: Model Retraining</h2>
+
+            <div class="info-box">
+                <strong>📋 Retraining Process:</strong><br>
+                1. Load pre-trained model<br>
+                2. Prepare data from database<br>
+                3. Apply preprocessing pipeline<br>
+                4. Fine-tune model using transfer learning<br>
+                5. Evaluate and deploy new model
+            </div>
+
+            <div id="retrainStatus" class="status-box"></div>
+
+            <div id="progressContainer" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressBar">0%</div>
+                </div>
+                <p id="progressMessage" style="text-align: center; color: #666; margin-top: 10px;"></p>
+            </div>
+
+            <div id="resultsContainer" style="display: none; margin-top: 20px;">
+                <h3 style="color: #667eea; margin-bottom: 15px;">Training Results</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <div style="background: #f8f9ff; padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="color: #666; font-size: 0.9rem;">Final Accuracy</div>
+                        <div id="finalAccuracy" style="color: #667eea; font-size: 2rem; font-weight: bold;">--</div>
+                    </div>
+                    <div style="background: #f8f9ff; padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="color: #666; font-size: 0.9rem;">Images Used</div>
+                        <div id="imagesUsed" style="color: #667eea; font-size: 2rem; font-weight: bold;">--</div>
+                    </div>
+                    <div style="background: #f8f9ff; padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="color: #666; font-size: 0.9rem;">Training Time</div>
+                        <div id="trainingTime" style="color: #667eea; font-size: 2rem; font-weight: bold;">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="text-align: center; margin-top: 30px;">
+                <button class="btn btn-secondary" onclick="goToStep2()" id="backBtn3">
+                    ← Back
+                </button>
+                <button class="btn" onclick="startRetraining()" id="retrainBtn">
+                    🚀 Start Retraining
+                </button>
+                <button class="btn" onclick="location.reload()" id="doneBtn" style="display: none; background: #10b981;">
+                    ✅ Done
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedClass = 'NORMAL';
+        let selectedFiles = [];
+        let uploadedCount = 0;
+        let currentJobId = null;
+        let retrainingStartTime = null;
+
+        // Initialize
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            handleFiles(Array.from(e.dataTransfer.files));
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(Array.from(e.target.files));
+        });
+
+        function selectClass(className) {
+            selectedClass = className;
+            document.getElementById('normalBtn').classList.toggle('active', className === 'NORMAL');
+            document.getElementById('pneumoniaBtn').classList.toggle('active', className === 'PNEUMONIA');
+        }
+
+        function handleFiles(files) {
+            selectedFiles = selectedFiles.concat(files);
+            displayFiles();
+            document.getElementById('uploadBtn').disabled = selectedFiles.length === 0;
+        }
+
+        function displayFiles() {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = selectedFiles.map((file, index) => `
+                <div class="file-item">
+                    <span>📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>
+                    <span class="remove-btn" onclick="removeFile(${index})">❌</span>
+                </div>
+            `).join('');
+        }
+
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            displayFiles();
+            document.getElementById('uploadBtn').disabled = selectedFiles.length === 0;
+        }
+
+        function clearFiles() {
+            selectedFiles = [];
+            fileInput.value = '';
+            displayFiles();
+            document.getElementById('uploadBtn').disabled = true;
+        }
+
+        async function uploadFiles() {
+            if (selectedFiles.length === 0) return;
+
+            const uploadBtn = document.getElementById('uploadBtn');
+            const statusBox = document.getElementById('uploadStatus');
+
+            uploadBtn.disabled = true;
+            statusBox.className = 'status-box info';
+            statusBox.style.display = 'block';
+            statusBox.textContent = 'Uploading and preprocessing images...';
+
+            const formData = new FormData();
+            selectedFiles.forEach(file => formData.append('files', file));
+            formData.append('label', selectedClass);
+
+            try {
+                const response = await fetch('/upload-data', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    uploadedCount += data.files_uploaded;
+                    statusBox.className = 'status-box success';
+                    statusBox.innerHTML = `
+                        ✅ Success!<br>
+                        Uploaded: ${data.files_uploaded} images<br>
+                        Class: ${data.label}<br>
+                        Status: Saved to database and preprocessed
+                    `;
+
+                    clearFiles();
+                    document.getElementById('nextStep1Btn').disabled = false;
+                } else {
+                    statusBox.className = 'status-box error';
+                    statusBox.textContent = '❌ Upload failed: ' + data.error;
+                }
+            } catch (error) {
+                statusBox.className = 'status-box error';
+                statusBox.textContent = '❌ Network error: ' + error.message;
+            } finally {
+                uploadBtn.disabled = false;
+            }
+        }
+
+        function goToStep1() {
+            document.getElementById('uploadCard').style.display = 'block';
+            document.getElementById('configCard').style.display = 'none';
+            document.getElementById('retrainCard').style.display = 'none';
+            updateSteps(1);
+        }
+
+        function goToStep2() {
+            if (uploadedCount === 0) {
+                alert('Please upload some training data first');
+                return;
+            }
+            document.getElementById('uploadCard').style.display = 'none';
+            document.getElementById('configCard').style.display = 'block';
+            document.getElementById('retrainCard').style.display = 'none';
+            updateSteps(2);
+        }
+
+        function goToStep3() {
+            document.getElementById('uploadCard').style.display = 'none';
+            document.getElementById('configCard').style.display = 'none';
+            document.getElementById('retrainCard').style.display = 'block';
+            updateSteps(3);
+        }
+
+        function updateSteps(activeStep) {
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`step${i}`);
+                step.classList.remove('active', 'completed');
+                if (i < activeStep) {
+                    step.classList.add('completed');
+                } else if (i === activeStep) {
+                    step.classList.add('active');
+                }
+            }
+        }
+
+        async function startRetraining() {
+            const epochs = parseInt(document.getElementById('epochs').value);
+            const batchSize = parseInt(document.getElementById('batchSize').value);
+
+            document.getElementById('retrainBtn').disabled = true;
+            document.getElementById('backBtn3').disabled = true;
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('retrainStatus').className = 'status-box info';
+            document.getElementById('retrainStatus').style.display = 'block';
+            document.getElementById('retrainStatus').textContent = '🔄 Starting retraining process...';
+
+            retrainingStartTime = Date.now();
+
+            try {
+                const response = await fetch('/retrain', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ epochs, batch_size: batchSize })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    currentJobId = data.job_id;
+                    document.getElementById('retrainStatus').textContent =
+                        `✅ ${data.message}\nJob ID: ${data.job_id}`;
+                    monitorRetraining(data.job_id);
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                document.getElementById('retrainStatus').className = 'status-box error';
+                document.getElementById('retrainStatus').textContent = '❌ Failed to start retraining: ' + error.message;
+                document.getElementById('retrainBtn').disabled = false;
+                document.getElementById('backBtn3').disabled = false;
+            }
+        }
+
+        async function monitorRetraining(jobId) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/retrain-status/${jobId}`);
+                    const status = await response.json();
+
+                    updateProgress(status.progress || 0, status.message || 'Processing...');
+
+                    if (status.status === 'completed') {
+                        clearInterval(interval);
+                        showResults(status);
+                    } else if (status.status === 'failed') {
+                        clearInterval(interval);
+                        showError(status.message);
+                    }
+                } catch (error) {
+                    console.error('Error monitoring retraining:', error);
+                }
+            }, 2000);
+        }
+
+        function updateProgress(percent, message) {
+            const bar = document.getElementById('progressBar');
+            const msg = document.getElementById('progressMessage');
+            bar.style.width = percent + '%';
+            bar.textContent = percent + '%';
+            msg.textContent = message;
+        }
+
+        function showResults(status) {
+            const trainingTime = ((Date.now() - retrainingStartTime) / 1000).toFixed(0);
+
+            document.getElementById('retrainStatus').className = 'status-box success';
+            document.getElementById('retrainStatus').innerHTML = `
+                ✅ <strong>Retraining Completed Successfully!</strong><br>
+                The model has been retrained and deployed.
+            `;
+
+            document.getElementById('resultsContainer').style.display = 'block';
+            document.getElementById('finalAccuracy').textContent =
+                status.final_accuracy ? (status.final_accuracy * 100).toFixed(1) + '%' : 'N/A';
+            document.getElementById('imagesUsed').textContent = status.num_images || uploadedCount;
+            document.getElementById('trainingTime').textContent = trainingTime + 's';
+
+            document.getElementById('retrainBtn').style.display = 'none';
+            document.getElementById('doneBtn').style.display = 'inline-block';
+            document.getElementById('backBtn3').disabled = false;
+        }
+
+        function showError(message) {
+            document.getElementById('retrainStatus').className = 'status-box error';
+            document.getElementById('retrainStatus').textContent = '❌ Retraining failed: ' + message;
+            document.getElementById('retrainBtn').disabled = false;
+            document.getElementById('backBtn3').disabled = false;
+        }
+    </script>
+</body>
+</html>

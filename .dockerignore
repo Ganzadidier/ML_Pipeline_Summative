@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+*.log
+.git/
+.gitignore
+*.md
+*.ipynb_checkpoints/
+data/raw/
+data/retrain/
+*.db
