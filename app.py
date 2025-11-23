@@ -64,7 +64,7 @@ print("=" * 70)
 print("\n1. Loading MobileNet Model...")
 try:
     with model_lock:
-        model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final.keras')
+        model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final_tf2.h5')
         models_loaded = True
     print("   ✓ MobileNet Model: Loaded (End-to-End)")
 except Exception as e:
@@ -477,7 +477,7 @@ def retrain():
                 # Reload model after retraining
                 global model, models_loaded
                 with model_lock:
-                    model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final.keras')
+                    model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final_tf2.h5')
                     models_loaded = True
                 print(f"[RETRAIN] Model reloaded successfully")
 

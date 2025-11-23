@@ -17,7 +17,7 @@ IMG_SIZE = (224, 224)  # MobileNetV2 default
 # -----------------------------------------------------------
 # LOAD MODEL
 # -----------------------------------------------------------
-def load_mobilenet_model(model_path='../notebooks/models/mobilenet_final.keras'):
+def load_mobilenet_model(model_path='../notebooks/models/mobilenet_final_tf2.h5'):
     """
     Load the full MobileNetV2 model trained in the notebook.
 
