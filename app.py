@@ -566,20 +566,6 @@ def visualization_data():
 # ============================================================================
 
 if __name__ == '__main__':
-    print("\n" + "=" * 70)
-    print("STARTING FLASK APPLICATION - MOBILENET END-TO-END")
-    print("=" * 70)
-    print("Access the application at:")
-    print("  → Dashboard: http://localhost:5000")
-    print("  → Prediction: http://localhost:5000/predict-page")
-    print("  → Visualizations: http://localhost:5000/visualize")
-    print("  → Retraining: http://localhost:5000/retrain-page")
-    print("\nMode: MobileNet End-to-End Classification")
-    print("  ✓ No SVM - Direct MobileNet predictions")
-    print("  ✓ Eager model loading at startup")
-    print("  ✓ Image optimization enabled")
-    print("  ✓ Batch prediction support")
-    print("=" * 70 + "\n")
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
