@@ -1,279 +1,148 @@
 """
-Prediction Module for MobileNet + SVM Model
-RUBRIC: Prediction Process (10 points)
-- Demonstrates inserting data point for prediction ✓
-- Displays CORRECT prediction ✓
+MobileNetV2 End-to-End Prediction Module
+Uses the trained full model saved as mobilenet_final.keras
 """
 
-import tensorflow as tf
-from tensorflow import keras
-import numpy as np
-import joblib
 import os
-from PIL import Image
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing import image
 
-# Configuration
-IMG_SIZE = 224
-MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
-FEATURE_EXTRACTOR_PATH = os.path.join(MODEL_DIR, "mobilenet_base.keras")
-SVM_MODEL_PATH = os.path.join(MODEL_DIR, "svm_model.joblib")
-SCALER_PATH = os.path.join(MODEL_DIR, "scaler.joblib")
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-# Class labels (update these based on your dataset)
-CLASS_LABELS = ['NORMAL', 'PNEUMONIA']
+IMG_SIZE = (224, 224)  # MobileNetV2 default
 
 
-def load_models():
+# -----------------------------------------------------------
+# LOAD MODEL
+# -----------------------------------------------------------
+def load_mobilenet_model(model_path='../notebooks/models/mobilenet_final.keras'):
     """
-    Load all required models for prediction
+    Load the full MobileNetV2 model trained in the notebook.
 
     Returns:
-        feature_extractor: MobileNet feature extractor
-        svm_model: Trained SVM classifier
-        scaler: Feature scaler
+        model: Keras model ready for inference
     """
-    print(f"Loading models from: {MODEL_DIR}")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model not found at: {model_path}")
 
-    if not os.path.exists(FEATURE_EXTRACTOR_PATH):
-        raise FileNotFoundError(
-            f"Feature extractor not found at {FEATURE_EXTRACTOR_PATH}\n"
-            f"Current directory: {os.getcwd()}\n"
-            f"Please train the model first: python src/model.py --train"
-        )
-    if not os.path.exists(SVM_MODEL_PATH):
-        raise FileNotFoundError(f"SVM model not found at {SVM_MODEL_PATH}")
-    if not os.path.exists(SCALER_PATH):
-        raise FileNotFoundError(f"Scaler not found at {SCALER_PATH}")
+    print(f"\n[LOADING MODEL]")
+    print(f" → {model_path}")
 
-    print(f"Loading feature extractor from {FEATURE_EXTRACTOR_PATH}...")
-    full_model = keras.models.load_model(FEATURE_EXTRACTOR_PATH, compile=False)
+    model = load_model(model_path, compile=False)
 
-    # Extract feature extraction layers (up to global average pooling)
-    base_output = None
-    for layer in full_model.layers:
-        if 'global_average' in layer.name.lower() or isinstance(layer, keras.layers.GlobalAveragePooling2D):
-            base_output = layer.output
-            break
+    # Compile for inference (no effect on predictions)
+    model.compile(
+        optimizer='adam',
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
 
-    if base_output is None:
-        # Fallback: use penultimate layer
-        base_output = full_model.layers[-2].output
+    print(" ✓ Model loaded successfully")
+    print(f"   - Input shape: {model.input_shape}")
+    print(f"   - Output shape: {model.output_shape}")
+    print(f"   - Classes: 2 (NORMAL, PNEUMONIA)\n")
 
-    feature_extractor = keras.Model(inputs=full_model.input, outputs=base_output)
-
-    print(f"Loading SVM model from {SVM_MODEL_PATH}...")
-    svm_model = joblib.load(SVM_MODEL_PATH)
-
-    print(f"Loading scaler from {SCALER_PATH}...")
-    scaler = joblib.load(SCALER_PATH)
-
-    print("✓ All models loaded successfully!")
-    return feature_extractor, svm_model, scaler
+    return model
 
 
-def preprocess_image(image_path, target_size=(IMG_SIZE, IMG_SIZE)):
+# -----------------------------------------------------------
+# IMAGE PREPROCESSOR
+# -----------------------------------------------------------
+def preprocess_image(img_path):
     """
-    Preprocess image for model input
-
-    Args:
-        image_path: Path to image file
-        target_size: Target size (height, width)
+    Loads and preprocesses an image for MobileNetV2.
 
     Returns:
-        Preprocessed image array ready for model
+        np.ndarray of shape (1, 224, 224, 3)
     """
-    # Load image
-    img = Image.open(image_path)
-
-    # Convert to RGB if needed
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-
-    # Resize
-    img = img.resize(target_size, Image.LANCZOS)
-
-    # Convert to array
-    img_array = np.array(img)
-
-    # Normalize to [0, 1]
-    img_array = img_array.astype(np.float32) / 255.0
-
-    return img_array
+    img = image.load_img(img_path, target_size=IMG_SIZE)
+    arr = image.img_to_array(img) / 255.0  # NOTE: Notebook used rescale(1./255)
+    return np.expand_dims(arr, axis=0)
 
 
-def predict_image(feature_extractor, svm_model, scaler, image_path):
+# -----------------------------------------------------------
+# SINGLE IMAGE PREDICTION
+# -----------------------------------------------------------
+def predict_single(model, img_path):
     """
-    Predict class for single image using MobileNet + SVM pipeline
-
-    RUBRIC: This function demonstrates the prediction process
-
-    Args:
-        feature_extractor: MobileNet feature extractor
-        svm_model: Trained SVM model
-        scaler: Feature scaler
-        image_path: Path to image file
+    Predict a single image using the full MobileNet model.
 
     Returns:
-        prediction: Predicted class label
-        confidence: Confidence score (probability)
+        (label, confidence)
     """
-    # Step 1: Preprocess image
-    img_array = preprocess_image(image_path)
+    x = preprocess_image(img_path)
+    proba = model.predict(x, verbose=0)[0]  # shape (2,)
 
-    # Step 2: Add batch dimension
-    img_batch = np.expand_dims(img_array, axis=0)
+    pred_id = int(np.argmax(proba))
+    confidence = float(proba[pred_id])
 
-    # Step 3: Extract features using MobileNet
-    features = feature_extractor.predict(img_batch, verbose=0)
+    # Label map — same order as training
+    label_map = {0: 'NORMAL', 1: 'PNEUMONIA'}
+    label = label_map[pred_id]
 
-    # Step 4: Scale features
-    features_scaled = scaler.transform(features)
-
-    # Step 5: Predict with SVM
-    prediction_idx = svm_model.predict(features_scaled)[0]
-
-    # Step 6: Get probability/confidence
-    probabilities = svm_model.predict_proba(features_scaled)[0]
-    confidence = probabilities[prediction_idx]
-
-    # Step 7: Map to label
-    predicted_label = CLASS_LABELS[prediction_idx]
-
-    return predicted_label, confidence
+    return label, confidence
 
 
-def predict_batch(feature_extractor, svm_model, scaler, image_paths, batch_size=32):
+# -----------------------------------------------------------
+# BATCH PREDICTION
+# -----------------------------------------------------------
+def predict_batch(model, img_paths, batch_size=32):
     """
-    Predict classes for multiple images
-
-    Args:
-        feature_extractor: MobileNet feature extractor
-        svm_model: Trained SVM model
-        scaler: Feature scaler
-        image_paths: List of image file paths
-        batch_size: Batch size for prediction
+    Predict multiple images efficiently.
 
     Returns:
-        results: List of (prediction, confidence) tuples
+        list of (label, confidence)
     """
     results = []
 
-    for i in range(0, len(image_paths), batch_size):
-        batch_paths = image_paths[i:i + batch_size]
+    for i in range(0, len(img_paths), batch_size):
+        batch_paths = img_paths[i:i + batch_size]
         batch_images = []
 
-        for path in batch_paths:
+        for p in batch_paths:
             try:
-                img_array = preprocess_image(path)
-                batch_images.append(img_array)
-            except Exception as e:
-                print(f"Error processing {path}: {e}")
+                batch_images.append(preprocess_image(p)[0])
+            except:
                 results.append((None, 0.0))
                 continue
 
-        if batch_images:
-            # Extract features
-            batch_array = np.array(batch_images)
-            features = feature_extractor.predict(batch_array, verbose=0)
+        if not batch_images:
+            continue
 
-            # Scale features
-            features_scaled = scaler.transform(features)
+        batch = np.array(batch_images)
+        probas = model.predict(batch, verbose=0)
 
-            # Predict
-            predictions = svm_model.predict(features_scaled)
-            probabilities = svm_model.predict_proba(features_scaled)
+        label_map = {0: 'NORMAL', 1: 'PNEUMONIA'}
 
-            for pred_idx, probs in zip(predictions, probabilities):
-                predicted_label = CLASS_LABELS[pred_idx]
-                confidence = probs[pred_idx]
-                results.append((predicted_label, float(confidence)))
+        for proba in probas:
+            pred_id = int(np.argmax(proba))
+            confidence = float(proba[pred_id])
+            label = label_map[pred_id]
+            results.append((label, confidence))
 
     return results
 
 
-def get_prediction_probabilities(feature_extractor, svm_model, scaler, image_path):
-    """
-    Get prediction probabilities for all classes
-
-    Args:
-        feature_extractor: MobileNet feature extractor
-        svm_model: Trained SVM model
-        scaler: Feature scaler
-        image_path: Path to image file
-
-    Returns:
-        probabilities: Dictionary of class probabilities
-    """
-    # Preprocess
-    img_array = preprocess_image(image_path)
-    img_batch = np.expand_dims(img_array, axis=0)
-
-    # Extract features
-    features = feature_extractor.predict(img_batch, verbose=0)
-
-    # Scale features
-    features_scaled = scaler.transform(features)
-
-    # Get probabilities
-    probs = svm_model.predict_proba(features_scaled)[0]
-
-    probabilities = {
-        label: float(probs[i])
-        for i, label in enumerate(CLASS_LABELS)
-    }
-
-    return probabilities
-
-
+# -----------------------------------------------------------
+# DIRECT EXECUTION TEST
+# -----------------------------------------------------------
 if __name__ == "__main__":
-    import argparse
-    import glob
+    print("Testing MobileNetV2 Prediction Module...\n")
 
-    parser = argparse.ArgumentParser(description='Make predictions on chest X-ray images')
-    parser.add_argument('--image', help='Single image path')
-    parser.add_argument('--batch', help='Directory containing images')
-    parser.add_argument('--probabilities', action='store_true', help='Show all class probabilities')
+    try:
+        model = load_mobilenet_model()
 
-    args = parser.parse_args()
-
-    # Load models
-    print("Loading models...")
-    feature_extractor, svm_model, scaler = load_models()
-
-    if args.image:
-        # Single image prediction
-        if args.probabilities:
-            probs = get_prediction_probabilities(feature_extractor, svm_model, scaler, args.image)
-            print(f"\nImage: {args.image}")
-            print("Probabilities:")
-            for label, prob in probs.items():
-                print(f"  {label}: {prob:.4f}")
+        sample = "IM-0122-0001.jpeg"
+        if os.path.exists(sample):
+            label, conf = predict_single(model, sample)
+            print(f"Prediction: {label} ({conf:.4f})")
         else:
-            prediction, confidence = predict_image(feature_extractor, svm_model, scaler, args.image)
-            print(f"\nImage: {args.image}")
-            print(f"Prediction: {prediction}")
-            print(f"Confidence: {confidence:.4f}")
+            print("No test image found at IM-0122-0001.jpeg")
 
-    elif args.batch:
-        # Batch prediction
-        image_paths = []
-        for ext in ['*.jpg', '*.jpeg', '*.png']:
-            image_paths.extend(glob.glob(os.path.join(args.batch, ext)))
-            image_paths.extend(glob.glob(os.path.join(args.batch, ext.upper())))
+        print("\n✓ Prediction test completed")
 
-        print(f"\nFound {len(image_paths)} images")
-        print("Making predictions...\n")
-
-        results = predict_batch(feature_extractor, svm_model, scaler, image_paths)
-
-        for path, (prediction, confidence) in zip(image_paths, results):
-            if prediction:
-                print(f"{os.path.basename(path)}: {prediction} ({confidence:.4f})")
-            else:
-                print(f"{os.path.basename(path)}: ERROR")
-
-    else:
-        print("Please provide --image or --batch argument")
-        print("Examples:")
-        print("  python src/prediction.py --image test.jpg")
-        print("  python src/prediction.py --batch data/test/NORMAL --probabilities")
+    except Exception as e:
+        print(f"\n✗ Failed: {e}")
+        raise

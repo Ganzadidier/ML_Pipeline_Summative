@@ -1,6 +1,7 @@
 """
-Flask Application for MobileNet + SVM ML Pipeline
-Serves prediction, retraining, and monitoring interfaces
+Flask Application for MobileNet ML Pipeline (OPTIMIZED)
+Uses MobileNet End-to-End - NO SVM
+Direct classification with MobileNet
 """
 
 from flask import Flask, render_template, request, jsonify
@@ -11,6 +12,8 @@ import json
 from datetime import datetime
 import threading
 import numpy as np
+from PIL import Image
+import io
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -36,40 +39,38 @@ metrics = {
     'predictions_log': []
 }
 
-# Import modules
-from src.prediction import load_models, predict_image
-from src.retraining import (
-    trigger_retraining,
-    get_retraining_status,
-    init_database,
-    save_uploaded_file_to_database,
-    preprocess_uploaded_data,
-    get_database_statistics
+from src.retraining import ( trigger_retraining,
+                             get_retraining_status,
+                             init_database, save_uploaded_file_to_database,
+                             preprocess_uploaded_data, get_database_statistics )
+
+# Import modules - MobileNet end-to-end (NO SVM)
+from src.prediction import (
+    load_mobilenet_model,
+    predict_single,
+    predict_batch
 )
 
-# Global variables for models
-feature_extractor = None
-svm_model = None
-scaler = None
+# Global variables for model
+model = None
 models_loaded = False
+model_lock = threading.Lock()
 
-# Load models on startup
+# Load model on startup (EAGER LOADING)
 print("\n" + "=" * 70)
-print("INITIALIZING ML PIPELINE - MOBILENET + SVM")
+print("INITIALIZING ML PIPELINE - MOBILENET END-TO-END (NO SVM)")
 print("=" * 70)
 
-print("\n1. Loading Models...")
+print("\n1. Loading MobileNet Model...")
 try:
-    feature_extractor, svm_model, scaler = load_models()
-    models_loaded = True
-    print("   ✓ Feature Extractor: Loaded")
-    print("   ✓ SVM Model: Loaded")
-    print("   ✓ Scaler: Loaded")
-    print("   ✓ All models loaded successfully!")
+    with model_lock:
+        model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final.keras')
+        models_loaded = True
+    print("   ✓ MobileNet Model: Loaded (End-to-End)")
 except Exception as e:
-    print(f"   ✗ Error loading models: {e}")
-    print("   → Make sure you've trained the model: python src/model.py --train")
+    print(f"   ✗ Error loading model: {e}")
     models_loaded = False
+
 
 print("\n2. Initializing Database...")
 try:
@@ -79,13 +80,40 @@ except Exception as e:
     print(f"   ✗ Database initialization failed: {e}")
 
 print("\n" + "=" * 70)
-print("SERVER READY")
+print("SERVER READY - MOBILENET END-TO-END MODE")
 print("=" * 70 + "\n")
 
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+
+def optimize_image(file_obj, max_size=(1024, 1024), quality=85):
+    """
+    Optimize image for faster processing
+    """
+    try:
+        img = Image.open(file_obj)
+
+        # Convert to RGB if needed
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+
+        # Resize if too large
+        if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+
+        # Save optimized
+        output = io.BytesIO()
+        img.save(output, format='JPEG', quality=quality, optimize=True)
+        output.seek(0)
+
+        return output
+    except Exception as e:
+        print(f"Image optimization failed: {e}")
+        file_obj.seek(0)
+        return file_obj
 
 
 # ============================================================================
@@ -126,22 +154,22 @@ def health():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'models_loaded': models_loaded
+        'models_loaded': models_loaded,
+        'mode': 'mobilenet-end-to-end'
     })
 
 
 @app.route('/model-status')
 def model_status():
     """Model status endpoint"""
-    global feature_extractor, svm_model, scaler, models_loaded
+    global model, models_loaded
     return jsonify({
-        'model_loaded': models_loaded and feature_extractor is not None,
+        'model_loaded': models_loaded and model is not None,
         'model_path': 'models/mobilenet_base.keras',
-        'model_type': 'MobileNetV2 + SVM',
-        'feature_extractor': feature_extractor is not None,
-        'svm_model': svm_model is not None,
-        'scaler': scaler is not None,
-        'version': '1.0'
+        'model_type': 'MobileNet End-to-End',
+        'classification_mode': 'direct',
+        'svm_used': False,
+        'version': '2.0-mobilenet-only'
     })
 
 
@@ -153,6 +181,8 @@ def get_metrics():
     uptime_days = uptime_hours / 24
 
     avg_latency = np.mean(metrics['latencies'][-100:]) if metrics['latencies'] else 0
+    min_latency = np.min(metrics['latencies'][-100:]) if metrics['latencies'] else 0
+    max_latency = np.max(metrics['latencies'][-100:]) if metrics['latencies'] else 0
 
     return jsonify({
         'uptime_seconds': uptime_seconds,
@@ -160,31 +190,33 @@ def get_metrics():
         'total_predictions': metrics['total_predictions'],
         'total_errors': metrics['total_errors'],
         'avg_latency_ms': round(avg_latency, 2),
+        'min_latency_ms': round(min_latency, 2),
+        'max_latency_ms': round(max_latency, 2),
         'success_rate': round((1 - metrics['total_errors'] / max(metrics['total_predictions'], 1)) * 100, 2)
     })
 
 
 # ============================================================================
-# API ENDPOINTS - PREDICTION
+# API ENDPOINTS - PREDICTION (MOBILENET END-TO-END)
 # ============================================================================
 
 @app.route('/predict', methods=['POST'])
 def predict():
     """
-    Single image prediction endpoint
+    Single image prediction using MobileNet end-to-end (NO SVM)
     RUBRIC: Prediction Process (10 points)
     """
     start_time = time.time()
 
     try:
-        global feature_extractor, svm_model, scaler, models_loaded
+        global model, models_loaded
 
-        # Load models if not loaded
-        if not models_loaded or feature_extractor is None or svm_model is None or scaler is None:
-            print("Loading models on first request...")
-            feature_extractor, svm_model, scaler = load_models()
-            models_loaded = True
-            print("✓ Models loaded")
+        # Check if model is loaded
+        if not models_loaded or model is None:
+            return jsonify({
+                'error': 'Model not loaded. Please restart the application.',
+                'details': 'MobileNet model should be loaded at startup'
+            }), 503
 
         # Validate request
         if 'file' not in request.files:
@@ -198,15 +230,23 @@ def predict():
         if not allowed_file(file.filename):
             return jsonify({'error': 'Invalid file type. Use PNG, JPG, or JPEG'}), 400
 
+        # Optimize image
+        optimized_file = optimize_image(file.stream)
+
         # Save file temporarily
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
 
-        # Make prediction using MobileNet + SVM
-        print(f"Making prediction on: {filename}")
-        prediction, confidence = predict_image(feature_extractor, svm_model, scaler, filepath)
-        print(f"Prediction: {prediction} (confidence: {confidence:.4f})")
+        with open(filepath, 'wb') as f:
+            f.write(optimized_file.read())
+
+        # Make prediction using MobileNet (direct - no SVM)
+        print(f"[PREDICT] Processing: {filename}")
+
+        with model_lock:
+            prediction, confidence = predict_single(model, filepath)
+
+        print(f"[PREDICT] Result: {prediction} (confidence: {confidence:.4f})")
 
         # Calculate latency
         latency = (time.time() - start_time) * 1000  # milliseconds
@@ -218,14 +258,15 @@ def predict():
             'timestamp': datetime.now().isoformat(),
             'prediction': prediction,
             'confidence': float(confidence),
-            'latency_ms': latency
+            'latency_ms': latency,
+            'filename': filename
         })
 
         # Keep only last 1000 predictions
         if len(metrics['predictions_log']) > 1000:
             metrics['predictions_log'] = metrics['predictions_log'][-1000:]
 
-        # Clean up uploaded file
+        # Clean up
         try:
             os.remove(filepath)
         except:
@@ -235,12 +276,100 @@ def predict():
             'prediction': prediction,
             'confidence': float(confidence),
             'latency_ms': round(latency, 2),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'model': 'MobileNet End-to-End'
         })
 
     except Exception as e:
         metrics['total_errors'] += 1
-        print(f"Prediction error: {e}")
+        print(f"[ERROR] Prediction failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+@app.route('/predict-batch', methods=['POST'])
+def predict_batch():
+    """
+    Batch prediction using MobileNet end-to-end
+    """
+    start_time = time.time()
+
+    try:
+        global model, models_loaded
+
+        if not models_loaded:
+            return jsonify({'error': 'Model not loaded'}), 503
+
+        if 'files' not in request.files:
+            return jsonify({'error': 'No files provided'}), 400
+
+        files = request.files.getlist('files')
+
+        if not files:
+            return jsonify({'error': 'No files selected'}), 400
+
+        # Save files temporarily
+        filepaths = []
+        filenames = []
+
+        for file in files:
+            if file and allowed_file(file.filename):
+                filename = secure_filename(file.filename)
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+                # Optimize and save
+                optimized = optimize_image(file.stream)
+                with open(filepath, 'wb') as f:
+                    f.write(optimized.read())
+
+                filepaths.append(filepath)
+                filenames.append(filename)
+
+        print(f"[BATCH] Processing {len(filepaths)} images with MobileNet")
+
+        # Make batch predictions (MobileNet direct)
+        with model_lock:
+            results = predict_batch(model, filepaths)
+
+        # Calculate latency
+        latency = (time.time() - start_time) * 1000
+
+        # Format results
+        predictions = []
+        for filename, (prediction, confidence) in zip(filenames, results):
+            predictions.append({
+                'filename': filename,
+                'prediction': prediction,
+                'confidence': float(confidence)
+            })
+
+        # Update metrics
+        metrics['total_predictions'] += len(predictions)
+
+        # Clean up
+        for filepath in filepaths:
+            try:
+                os.remove(filepath)
+            except:
+                pass
+
+        print(f"[BATCH] Completed in {latency:.2f}ms")
+
+        return jsonify({
+            'predictions': predictions,
+            'total_processed': len(predictions),
+            'total_latency_ms': round(latency, 2),
+            'avg_latency_per_image_ms': round(latency / len(predictions), 2),
+            'timestamp': datetime.now().isoformat(),
+            'model': 'MobileNet End-to-End'
+        })
+
+    except Exception as e:
+        print(f"[ERROR] Batch prediction failed: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -254,7 +383,6 @@ def predict():
 def upload_data():
     """
     Upload multiple images for retraining
-    RUBRIC: Data file uploading + saving to database
     """
     try:
         if 'files' not in request.files:
@@ -273,21 +401,24 @@ def upload_data():
         saved_files = []
         database_ids = []
 
-        print(f"\nUploading {len(files)} files with label: {label}")
+        print(f"\n[UPLOAD] Processing {len(files)} files with label: {label}")
 
         for file in files:
             if file and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
                 filepath = os.path.join(label_dir, filename)
-                file.save(filepath)
 
-                # Save to database - RUBRIC REQUIREMENT
-                print(f"  Saving to database: {filename}")
+                # Optimize image
+                optimized = optimize_image(file.stream)
+                with open(filepath, 'wb') as f:
+                    f.write(optimized.read())
+
+                # Save to database
+                print(f"  → Saving to database: {filename}")
                 image_id = save_uploaded_file_to_database(filepath, filename, label)
 
                 if image_id:
-                    # Preprocess uploaded data - RUBRIC REQUIREMENT
-                    print(f"  Preprocessing image ID: {image_id}")
+                    print(f"  → Preprocessing image ID: {image_id}")
                     success = preprocess_uploaded_data(image_id)
 
                     if success:
@@ -297,7 +428,7 @@ def upload_data():
                     else:
                         print(f"  ✗ Preprocessing failed for: {filename}")
 
-        print(f"Upload complete: {len(saved_files)}/{len(files)} files processed\n")
+        print(f"[UPLOAD] Complete: {len(saved_files)}/{len(files)} files processed\n")
 
         return jsonify({
             'success': True,
@@ -308,7 +439,7 @@ def upload_data():
         })
 
     except Exception as e:
-        print(f"Upload error: {e}")
+        print(f"[ERROR] Upload failed: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -317,8 +448,7 @@ def upload_data():
 @app.route('/retrain', methods=['POST'])
 def retrain():
     """
-    Trigger model retraining
-    RUBRIC: Retraining using pre-trained model
+    Trigger model retraining (MobileNet end-to-end)
     """
     try:
         params = request.get_json() or {}
@@ -326,31 +456,33 @@ def retrain():
         batch_size = params.get('batch_size', 32)
 
         print(f"\n{'=' * 70}")
-        print("RETRAINING REQUEST RECEIVED")
+        print("RETRAINING REQUEST RECEIVED - MOBILENET END-TO-END")
         print(f"{'=' * 70}")
         print(f"Epochs: {epochs}")
         print(f"Batch size: {batch_size}")
 
-        # Start retraining in background thread
         job_id = f"retrain_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         def retrain_worker():
             try:
-                print(f"Starting retraining job: {job_id}")
-                # This uses the enhanced retraining function that:
-                # 1. Loads data from database
-                # 2. Preprocesses all uploaded data
-                # 3. Uses pre-trained MobileNet model for transfer learning
-                # 4. Retrains SVM on new features
+                print(f"[RETRAIN] Starting job: {job_id}")
                 trigger_retraining(
-                    data_dir=None,  # Uses database instead
+                    data_dir=None,
                     epochs=epochs,
                     batch_size=batch_size,
                     job_id=job_id
                 )
-                print(f"Retraining job {job_id} completed")
+                print(f"[RETRAIN] Job {job_id} completed")
+
+                # Reload model after retraining
+                global model, models_loaded
+                with model_lock:
+                    model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final.keras')
+                    models_loaded = True
+                print(f"[RETRAIN] Model reloaded successfully")
+
             except Exception as e:
-                print(f"Retraining job {job_id} failed: {e}")
+                print(f"[ERROR] Retraining job {job_id} failed: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -362,12 +494,12 @@ def retrain():
             'job_id': job_id,
             'epochs': epochs,
             'batch_size': batch_size,
-            'message': 'Model retraining started using pre-trained MobileNet with transfer learning',
-            'info': 'Retraining uses the existing MobileNet model and fine-tunes it on new data'
+            'message': 'MobileNet retraining started (end-to-end mode)',
+            'info': 'Model will be automatically reloaded after training completes'
         })
 
     except Exception as e:
-        print(f"Retrain endpoint error: {e}")
+        print(f"[ERROR] Retrain endpoint failed: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -397,7 +529,7 @@ def predictions_log():
 def visualization_data():
     """Get data for visualizations"""
     try:
-        # Load training history if exists
+        # Load training history
         history_path = 'models/results.json'
         if os.path.exists(history_path):
             with open(history_path, 'r') as f:
@@ -405,7 +537,7 @@ def visualization_data():
         else:
             training_history = {}
 
-        # Calculate prediction distribution
+        # Prediction distribution
         pred_distribution = {'NORMAL': 0, 'PNEUMONIA': 0}
         confidence_scores = []
 
@@ -413,7 +545,7 @@ def visualization_data():
             pred_distribution[pred['prediction']] = pred_distribution.get(pred['prediction'], 0) + 1
             confidence_scores.append(pred['confidence'])
 
-        # Get database statistics - RUBRIC: Data insights
+        # Database statistics
         db_stats = get_database_statistics()
 
         return jsonify({
@@ -425,7 +557,7 @@ def visualization_data():
         })
 
     except Exception as e:
-        print(f"Visualization data error: {e}")
+        print(f"[ERROR] Visualization data failed: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -435,13 +567,18 @@ def visualization_data():
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("STARTING FLASK APPLICATION")
+    print("STARTING FLASK APPLICATION - MOBILENET END-TO-END")
     print("=" * 70)
     print("Access the application at:")
     print("  → Dashboard: http://localhost:5000")
     print("  → Prediction: http://localhost:5000/predict-page")
     print("  → Visualizations: http://localhost:5000/visualize")
     print("  → Retraining: http://localhost:5000/retrain-page")
+    print("\nMode: MobileNet End-to-End Classification")
+    print("  ✓ No SVM - Direct MobileNet predictions")
+    print("  ✓ Eager model loading at startup")
+    print("  ✓ Image optimization enabled")
+    print("  ✓ Batch prediction support")
     print("=" * 70 + "\n")
 
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
