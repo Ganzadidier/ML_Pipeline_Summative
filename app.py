@@ -4,6 +4,106 @@ Uses MobileNet End-to-End - NO SVM
 Direct classification with MobileNet
 """
 
+import os
+import requests
+import sys
+
+
+def download_file_from_google_drive(file_id, destination):
+    """Download file from Google Drive"""
+
+    def get_confirm_token(response):
+        for key, value in response.cookies.items():
+            if key.startswith('download_warning'):
+                return value
+        return None
+
+    def save_response_content(response, destination):
+        CHUNK_SIZE = 32768
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
+
+        with open(destination, "wb") as f:
+            for chunk in response.iter_content(CHUNK_SIZE):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size:
+                        percent = (downloaded / total_size) * 100
+                        mb_downloaded = downloaded / 1024 / 1024
+                        mb_total = total_size / 1024 / 1024
+                        print(f"\r  Progress: {percent:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)", end='')
+        print()
+
+    URL = "https://docs.google.com/uc?export=download"
+    session = requests.Session()
+    response = session.get(URL, params={'id': file_id}, stream=True)
+    token = get_confirm_token(response)
+
+    if token:
+        params = {'id': file_id, 'confirm': token}
+        response = session.get(URL, params=params, stream=True)
+
+    save_response_content(response, destination)
+
+
+def ensure_all_models_ready():
+    """Ensure both models are present"""
+    print("\n" + "=" * 70)
+    print("CHECKING MODEL FILES")
+    print("=" * 70)
+
+    MODELS = {
+        'custom_pretrained_pneumonia_model.keras': {
+            'path': 'models/custom_pretrained_pneumonia_model.keras',
+            'gdrive_id': '1_kEICHEI4Aj4aKwr6tg47tEVoxcWrlwx',  # ← CHANGE THIS
+            'min_size_mb': 12
+        },
+
+        'mobilenet_final_tf2.h5': {
+            'path': 'src/models/mobilenet_final_tf2.h5',
+            'gdrive_id': '1q9Rs9bYxVMrvxnF9RTsR2C_WrHtvWsSP',  # ← CHANGE THIS
+            'min_size_mb': 10
+        }
+    }
+
+    for name, config in MODELS.items():
+        model_path = config['path']
+        min_size = config['min_size_mb'] * 1024 * 1024
+
+        print(f"\n📦 Checking: {name}")
+        needs_download = False
+
+        if not os.path.exists(model_path):
+            print(f"   ❌ Not found")
+            needs_download = True
+        elif os.path.getsize(model_path) < min_size:
+            print(f"   ⚠️  Too small (Git LFS pointer)")
+            needs_download = True
+        else:
+            print(f"   ✅ Valid ({os.path.getsize(model_path) / 1024 / 1024:.1f} MB)")
+
+        if needs_download:
+            print(f"   📥 Downloading...")
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+
+            try:
+                download_file_from_google_drive(config['gdrive_id'], model_path)
+                print(f"   ✅ Downloaded!")
+            except Exception as e:
+                print(f"   ❌ Error: {e}")
+                return False
+
+    print("\n" + "=" * 70)
+    print("✅ ALL MODELS READY")
+    print("=" * 70 + "\n")
+    return True
+
+
+# Call this before importing Flask/TensorFlow
+ensure_all_models_ready()
+
+
 from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
 import os
@@ -578,4 +678,4 @@ def visualization_data():
 if __name__ == '__main__':
 
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)

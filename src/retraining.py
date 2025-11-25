@@ -521,7 +521,7 @@ def retrain_mobilenet_model(train_dir, val_dir, job_id, epochs=5, batch_size=32,
         train_dir,
         target_size=(IMG_SIZE, IMG_SIZE),
         batch_size=batch_size,
-        class_mode='binary',  # Binary classification
+        class_mode='categorical',  # Binary classification
         shuffle=True
     )
 
@@ -529,7 +529,7 @@ def retrain_mobilenet_model(train_dir, val_dir, job_id, epochs=5, batch_size=32,
         val_dir,
         target_size=(IMG_SIZE, IMG_SIZE),
         batch_size=batch_size,
-        class_mode='binary',
+        class_mode='categorical',
         shuffle=False
     )
 
@@ -565,7 +565,7 @@ def retrain_mobilenet_model(train_dir, val_dir, job_id, epochs=5, batch_size=32,
 
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=fine_tune_lr),
-        loss='binary_crossentropy',
+        loss='categorical_crossentropy',
         metrics=['accuracy',
                  keras.metrics.Precision(name='precision'),
                  keras.metrics.Recall(name='recall')]
