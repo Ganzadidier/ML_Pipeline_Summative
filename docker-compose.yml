@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # Main web application
+  web:
+    build: .
+    image: ml-chest-xray-classifier:latest
+    ports:
+      - "5000-5010:5000"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./static/uploads:/app/static/uploads
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # Nginx load balancer (optional - use with --profile loadbalancer)
+  nginx:
+    image: nginx:alpine
+    container_name: ml-nginx-lb
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+    profiles:
+      - loadbalancer
+
+# Named networks for better isolation
+networks:
+  default:
+    name: ml-network
+    driver: bridge
+
+# Persistent volumes
+volumes:
+  models:
+    driver: local
+  data:
+    driver: local
