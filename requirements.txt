@@ -1,11 +1,11 @@
 # Core ML Libraries
-numpy==2.1.2
+numpy==1.26.4
 scikit-learn==1.5.2
 
 # Image Processing
 scikit-image
 opencv-python==4.9.0.80
-Pillow==10.0.0
+Pillow==10.4.0
 
 # Web Framework
 Flask==2.3.2
