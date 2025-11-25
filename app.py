@@ -18,6 +18,11 @@ import cv2
 from joblib import load
 from skimage.feature import hog
 
+from src.prediction import PneumoniaPredictor
+predictor = PneumoniaPredictor()
+
+
+
 # Initialize Flask app
 app = Flask(__name__)
 
