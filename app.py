@@ -1,108 +1,8 @@
 """
-Flask Application for MobileNet ML Pipeline (OPTIMIZED)
-Uses MobileNet End-to-End - NO SVM
-Direct classification with MobileNet
+Flask Application for Pneumonia Detection
+HOG Features + Random Forest Classifier
+Simple, Fast, Efficient
 """
-
-import os
-import requests
-import sys
-
-
-def download_file_from_google_drive(file_id, destination):
-    """Download file from Google Drive"""
-
-    def get_confirm_token(response):
-        for key, value in response.cookies.items():
-            if key.startswith('download_warning'):
-                return value
-        return None
-
-    def save_response_content(response, destination):
-        CHUNK_SIZE = 32768
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded = 0
-
-        with open(destination, "wb") as f:
-            for chunk in response.iter_content(CHUNK_SIZE):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size:
-                        percent = (downloaded / total_size) * 100
-                        mb_downloaded = downloaded / 1024 / 1024
-                        mb_total = total_size / 1024 / 1024
-                        print(f"\r  Progress: {percent:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)", end='')
-        print()
-
-    URL = "https://docs.google.com/uc?export=download"
-    session = requests.Session()
-    response = session.get(URL, params={'id': file_id}, stream=True)
-    token = get_confirm_token(response)
-
-    if token:
-        params = {'id': file_id, 'confirm': token}
-        response = session.get(URL, params=params, stream=True)
-
-    save_response_content(response, destination)
-
-
-def ensure_all_models_ready():
-    """Ensure both models are present"""
-    print("\n" + "=" * 70)
-    print("CHECKING MODEL FILES")
-    print("=" * 70)
-
-    MODELS = {
-        'custom_pretrained_pneumonia_model.keras': {
-            'path': 'models/custom_pretrained_pneumonia_model.keras',
-            'gdrive_id': '1_kEICHEI4Aj4aKwr6tg47tEVoxcWrlwx',  # ← CHANGE THIS
-            'min_size_mb': 12
-        },
-
-        'mobilenet_final_tf2.h5': {
-            'path': 'src/models/mobilenet_final_tf2.h5',
-            'gdrive_id': '1q9Rs9bYxVMrvxnF9RTsR2C_WrHtvWsSP',  # ← CHANGE THIS
-            'min_size_mb': 10
-        }
-    }
-
-    for name, config in MODELS.items():
-        model_path = config['path']
-        min_size = config['min_size_mb'] * 1024 * 1024
-
-        print(f"\n📦 Checking: {name}")
-        needs_download = False
-
-        if not os.path.exists(model_path):
-            print(f"   ❌ Not found")
-            needs_download = True
-        elif os.path.getsize(model_path) < min_size:
-            print(f"   ⚠️  Too small (Git LFS pointer)")
-            needs_download = True
-        else:
-            print(f"   ✅ Valid ({os.path.getsize(model_path) / 1024 / 1024:.1f} MB)")
-
-        if needs_download:
-            print(f"   📥 Downloading...")
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
-
-            try:
-                download_file_from_google_drive(config['gdrive_id'], model_path)
-                print(f"   ✅ Downloaded!")
-            except Exception as e:
-                print(f"   ❌ Error: {e}")
-                return False
-
-    print("\n" + "=" * 70)
-    print("✅ ALL MODELS READY")
-    print("=" * 70 + "\n")
-    return True
-
-
-# Call this before importing Flask/TensorFlow
-ensure_all_models_ready()
-
 
 from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
@@ -114,7 +14,9 @@ import threading
 import numpy as np
 from PIL import Image
 import io
-import tensorflow as tf
+import cv2
+from joblib import load
+from skimage.feature import hog
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -130,6 +32,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['RETRAIN_FOLDER'], exist_ok=True)
 os.makedirs('data/retrain/NORMAL', exist_ok=True)
 os.makedirs('data/retrain/PNEUMONIA', exist_ok=True)
+os.makedirs('models', exist_ok=True)
 
 # Global metrics
 metrics = {
@@ -140,56 +43,114 @@ metrics = {
     'predictions_log': []
 }
 
-from src.retraining import ( trigger_retraining,
-                             get_retraining_status,
-                             find_mobilenet_model,
-                             init_database, save_uploaded_file_to_database,
-                             preprocess_uploaded_data, get_database_statistics )
-
-# Import modules - MobileNet end-to-end (NO SVM)
-from src.prediction import (
-    load_mobilenet_model,
-    predict_single,
-    predict_batch
+# Import retraining module
+from src.retraining import(
+    trigger_retraining,
+    get_retraining_status,
+    find_rf_model,
+    init_database,
+    save_uploaded_file_to_database,
+    preprocess_uploaded_data,
+    get_database_statistics
 )
 
-# Global variables for model
+# Global variables
 model = None
-models_loaded = False
+model_loaded = False
 model_lock = threading.Lock()
+IMG_SIZE = 128
+CLASS_NAMES = ['NORMAL', 'PNEUMONIA']
 
 
-def load_current_model():
-    """Load the SAME model path used by retraining.py"""
-    model_path = 'src/models/mobilenet_final_tf2.h5'
-    print(f"Loading model from: {model_path}")
-    return tf.keras.models.load_model(model_path, compile=False)
+def extract_hog_features(img_path):
+    """Extract HOG features from image"""
+    img = cv2.imread(img_path)
+    if img is None:
+        raise ValueError(f"Could not load image: {img_path}")
 
-# Load model on startup (EAGER LOADING)
+    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    features = hog(
+        gray,
+        orientations=12,
+        pixels_per_cell=(6, 6),
+        cells_per_block=(3, 3),
+        block_norm="L2-Hys",
+        transform_sqrt=True
+    )
+
+    return features
+
+
+def load_model():
+    """Load Random Forest model"""
+    model_path = find_rf_model()
+
+    if model_path and os.path.exists(model_path):
+        print(f"Loading model from: {model_path}")
+        return load(model_path)
+    else:
+        print("⚠ No model found. Please train a model first.")
+        return None
+
+
+def predict_single_image(model, image_path):
+    """Make prediction for single image"""
+    features = extract_hog_features(image_path)
+    prediction = model.predict([features])[0]
+    probabilities = model.predict_proba([features])[0]
+
+    return CLASS_NAMES[prediction], probabilities[prediction]
+
+
+def predict_batch_images(model, image_paths):
+    """Make predictions for multiple images"""
+    results = []
+    for img_path in image_paths:
+        try:
+            pred, conf = predict_single_image(model, img_path)
+            results.append((pred, conf))
+        except Exception as e:
+            print(f"Error predicting {img_path}: {e}")
+            results.append(("ERROR", 0.0))
+    return results
+
+
+# ============================================================================
+# STARTUP - Load Model
+# ============================================================================
+
 print("\n" + "=" * 70)
-print("INITIALIZING ML PIPELINE - MOBILENET END-TO-END (NO SVM)")
+print("INITIALIZING PNEUMONIA DETECTION SYSTEM")
+print("HOG Features + Random Forest Classifier")
 print("=" * 70)
 
-print("\n1. Loading MobileNet Model...")
-try:
-    with model_lock:
-        model = load_mobilenet_model(model_path='src/models/mobilenet_final_tf2.h5')
-        models_loaded = True
-    print("   ✓ MobileNet Model: Loaded (End-to-End)")
-except Exception as e:
-    print(f"   ✗ Error loading model: {e}")
-    models_loaded = False
-
-
-print("\n2. Initializing Database...")
+print("\n1. Initializing Database...")
 try:
     init_database()
     print("   ✓ Database initialized")
 except Exception as e:
     print(f"   ✗ Database initialization failed: {e}")
 
+print("\n2. Loading Random Forest Model...")
+try:
+    with model_lock:
+        model = load_model()
+        if model is not None:
+            model_loaded = True
+            print(f"   ✓ Model loaded successfully")
+            print(f"   ✓ Model type: Random Forest")
+            print(f"   ✓ Number of estimators: {model.n_estimators}")
+            print(f"   ✓ Classes: {CLASS_NAMES}")
+        else:
+            print("   ⚠ No model loaded - train model first using /retrain endpoint")
+except Exception as e:
+    print(f"   ✗ Error loading model: {e}")
+    model_loaded = False
+
 print("\n" + "=" * 70)
-print("SERVER READY - MOBILENET END-TO-END MODE")
+print("SERVER READY")
 print("=" * 70 + "\n")
 
 
@@ -199,21 +160,16 @@ def allowed_file(filename):
 
 
 def optimize_image(file_obj, max_size=(1024, 1024), quality=85):
-    """
-    Optimize image for faster processing
-    """
+    """Optimize image for faster processing"""
     try:
         img = Image.open(file_obj)
 
-        # Convert to RGB if needed
         if img.mode != 'RGB':
             img = img.convert('RGB')
 
-        # Resize if too large
         if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
 
-        # Save optimized
         output = io.BytesIO()
         img.save(output, format='JPEG', quality=quality, optimize=True)
         output.seek(0)
@@ -263,23 +219,29 @@ def health():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'models_loaded': models_loaded,
-        'mode': 'mobilenet-end-to-end'
+        'model_loaded': model_loaded,
+        'model_type': 'Random Forest + HOG'
     })
 
 
 @app.route('/model-status')
 def model_status():
     """Model status endpoint"""
-    global model, models_loaded
-    return jsonify({
-        'model_loaded': models_loaded and model is not None,
-        'model_path': 'models/mobilenet_base.keras',
-        'model_type': 'MobileNet End-to-End',
-        'classification_mode': 'direct',
-        'svm_used': False,
-        'version': '2.0-mobilenet-only'
-    })
+    global model, model_loaded
+
+    status = {
+        'model_loaded': model_loaded and model is not None,
+        'model_type': 'Random Forest',
+        'feature_extraction': 'HOG (Histogram of Oriented Gradients)',
+        'classification_mode': 'scikit-learn',
+        'version': '1.0-hog-rf'
+    }
+
+    if model is not None:
+        status['n_estimators'] = model.n_estimators
+        status['classes'] = CLASS_NAMES
+
+    return jsonify(status)
 
 
 @app.route('/metrics')
@@ -306,25 +268,25 @@ def get_metrics():
 
 
 # ============================================================================
-# API ENDPOINTS - PREDICTION (MOBILENET END-TO-END)
+# API ENDPOINTS - PREDICTION
 # ============================================================================
 
 @app.route('/predict', methods=['POST'])
 def predict():
     """
-    Single image prediction using MobileNet end-to-end (NO SVM)
+    Single image prediction using HOG + Random Forest
     RUBRIC: Prediction Process (10 points)
     """
     start_time = time.time()
 
     try:
-        global model, models_loaded
+        global model, model_loaded
 
         # Check if model is loaded
-        if not models_loaded or model is None:
+        if not model_loaded or model is None:
             return jsonify({
-                'error': 'Model not loaded. Please restart the application.',
-                'details': 'MobileNet model should be loaded at startup'
+                'error': 'Model not loaded. Please train a model using /retrain endpoint first.',
+                'details': 'No Random Forest model found'
             }), 503
 
         # Validate request
@@ -349,11 +311,11 @@ def predict():
         with open(filepath, 'wb') as f:
             f.write(optimized_file.read())
 
-        # Make prediction using MobileNet (direct - no SVM)
+        # Make prediction
         print(f"[PREDICT] Processing: {filename}")
 
         with model_lock:
-            prediction, confidence = predict_single(model, filepath)
+            prediction, confidence = predict_single_image(model, filepath)
 
         print(f"[PREDICT] Result: {prediction} (confidence: {confidence:.4f})")
 
@@ -386,7 +348,7 @@ def predict():
             'confidence': float(confidence),
             'latency_ms': round(latency, 2),
             'timestamp': datetime.now().isoformat(),
-            'model': 'MobileNet End-to-End'
+            'model': 'Random Forest + HOG'
         })
 
     except Exception as e:
@@ -401,16 +363,14 @@ def predict():
 
 
 @app.route('/predict-batch', methods=['POST'])
-def predict_batch():
-    """
-    Batch prediction using MobileNet end-to-end
-    """
+def predict_batch_endpoint():
+    """Batch prediction using HOG + Random Forest"""
     start_time = time.time()
 
     try:
-        global model, models_loaded
+        global model, model_loaded
 
-        if not models_loaded:
+        if not model_loaded or model is None:
             return jsonify({'error': 'Model not loaded'}), 503
 
         if 'files' not in request.files:
@@ -438,11 +398,11 @@ def predict_batch():
                 filepaths.append(filepath)
                 filenames.append(filename)
 
-        print(f"[BATCH] Processing {len(filepaths)} images with MobileNet")
+        print(f"[BATCH] Processing {len(filepaths)} images")
 
-        # Make batch predictions (MobileNet direct)
+        # Make batch predictions
         with model_lock:
-            results = predict_batch(model, filepaths)
+            results = predict_batch_images(model, filepaths)
 
         # Calculate latency
         latency = (time.time() - start_time) * 1000
@@ -474,7 +434,7 @@ def predict_batch():
             'total_latency_ms': round(latency, 2),
             'avg_latency_per_image_ms': round(latency / len(predictions), 2),
             'timestamp': datetime.now().isoformat(),
-            'model': 'MobileNet End-to-End'
+            'model': 'Random Forest + HOG'
         })
 
     except Exception as e:
@@ -490,9 +450,7 @@ def predict_batch():
 
 @app.route('/upload-data', methods=['POST'])
 def upload_data():
-    """
-    Upload multiple images for retraining
-    """
+    """Upload multiple images for retraining"""
     try:
         if 'files' not in request.files:
             return jsonify({'error': 'No files provided'}), 400
@@ -556,40 +514,42 @@ def upload_data():
 
 @app.route('/retrain', methods=['POST'])
 def retrain():
-    """
-    Trigger model retraining (MobileNet end-to-end)
-    """
+    """Trigger model retraining (HOG + Random Forest)"""
     try:
         params = request.get_json() or {}
-        epochs = params.get('epochs', 5)
-        batch_size = params.get('batch_size', 32)
 
         print(f"\n{'=' * 70}")
-        print("RETRAINING REQUEST RECEIVED - MOBILENET END-TO-END")
+        print("RETRAINING REQUEST RECEIVED")
+        print("HOG Features + Random Forest")
         print(f"{'=' * 70}")
-        print(f"Epochs: {epochs}")
-        print(f"Batch size: {batch_size}")
 
         job_id = f"retrain_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
 
         def retrain_worker():
             try:
                 print(f"[RETRAIN] Starting job: {job_id}")
+
+                # Pass the current model to retraining (if it exists)
+                global model, model_loaded
+                existing_model = model if model_loaded else None
+
                 trigger_retraining(
-                    data_dir=None,
-                    epochs=epochs,
-                    batch_size=batch_size,
-                    job_id=job_id
+                    job_id=job_id,
+                    existing_model=existing_model
                 )
+
                 print(f"[RETRAIN] Job {job_id} completed")
 
                 # Reload model after retraining
-                global model, models_loaded
                 with model_lock:
-                    model = load_current_model()
-                    models_loaded = True
-                print(f"[RETRAIN] Model reloaded successfully")
+                    model = load_model()
+                    model_loaded = model is not None
+
+                if model_loaded:
+                    print(f"[RETRAIN] Model reloaded successfully")
+                    print(f"  ✓ Number of estimators: {model.n_estimators}")
+                else:
+                    print(f"[RETRAIN] ⚠ Model reload failed")
 
             except Exception as e:
                 print(f"[ERROR] Retraining job {job_id} failed: {e}")
@@ -602,9 +562,7 @@ def retrain():
         return jsonify({
             'status': 'retraining_started',
             'job_id': job_id,
-            'epochs': epochs,
-            'batch_size': batch_size,
-            'message': 'MobileNet retraining started (end-to-end mode)',
+            'message': 'Random Forest retraining started',
             'info': 'Model will be automatically reloaded after training completes'
         })
 
@@ -639,10 +597,10 @@ def predictions_log():
 def visualization_data():
     """Get data for visualizations"""
     try:
-        # Load training history
-        history_path = 'models/results.json'
-        if os.path.exists(history_path):
-            with open(history_path, 'r') as f:
+        # Load training metadata
+        metadata_path = 'models/model_metadata.json'
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
                 training_history = json.load(f)
         else:
             training_history = {}
@@ -671,11 +629,29 @@ def visualization_data():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/database-stats')
+def database_stats():
+    """Get database statistics"""
+    try:
+        stats = get_database_statistics()
+        return jsonify({
+            'success': True,
+            'statistics': stats
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
 
 if __name__ == '__main__':
-
     port = int(os.environ.get("PORT", 5000))
+
+    print(f"\n{'=' * 70}")
+    print(f"Starting Flask server on port {port}")
+    print(f"Access the application at: http://localhost:{port}")
+    print(f"{'=' * 70}\n")
+
     app.run(host='0.0.0.0', port=port, debug=False)
