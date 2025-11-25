@@ -14,6 +14,7 @@ import threading
 import numpy as np
 from PIL import Image
 import io
+import tensorflow as tf
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -41,6 +42,7 @@ metrics = {
 
 from src.retraining import ( trigger_retraining,
                              get_retraining_status,
+                             find_mobilenet_model,
                              init_database, save_uploaded_file_to_database,
                              preprocess_uploaded_data, get_database_statistics )
 
@@ -56,6 +58,13 @@ model = None
 models_loaded = False
 model_lock = threading.Lock()
 
+
+def load_current_model():
+    """Load the SAME model path used by retraining.py"""
+    model_path = 'src/models/mobilenet_final_tf2.h5'
+    print(f"Loading model from: {model_path}")
+    return tf.keras.models.load_model(model_path, compile=False)
+
 # Load model on startup (EAGER LOADING)
 print("\n" + "=" * 70)
 print("INITIALIZING ML PIPELINE - MOBILENET END-TO-END (NO SVM)")
@@ -64,7 +73,7 @@ print("=" * 70)
 print("\n1. Loading MobileNet Model...")
 try:
     with model_lock:
-        model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final_tf2.h5')
+        model = load_mobilenet_model(model_path='src/models/mobilenet_final_tf2.h5')
         models_loaded = True
     print("   ✓ MobileNet Model: Loaded (End-to-End)")
 except Exception as e:
@@ -463,6 +472,7 @@ def retrain():
 
         job_id = f"retrain_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+
         def retrain_worker():
             try:
                 print(f"[RETRAIN] Starting job: {job_id}")
@@ -477,7 +487,7 @@ def retrain():
                 # Reload model after retraining
                 global model, models_loaded
                 with model_lock:
-                    model = load_mobilenet_model(model_path='notebooks/models/mobilenet_final_tf2.h5')
+                    model = load_current_model()
                     models_loaded = True
                 print(f"[RETRAIN] Model reloaded successfully")
 
@@ -568,4 +578,4 @@ def visualization_data():
 if __name__ == '__main__':
 
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=port, debug=True)
