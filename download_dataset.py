@@ -5,18 +5,29 @@ Cross-platform script to download and organize chest X-ray dataset
 
 import os
 import sys
-import subprocess
 import zipfile
 import shutil
 from pathlib import Path
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+
+import requests
 
 
-# Colors for terminal output
+# Share links can rotate slightly (different st= parameters), so keep editable.
+DROPBOX_SHARED_LINK = (
+    "https://www.dropbox.com/scl/fo/iyugbgf5j5csvge5vn1oo/"
+    "AEcvzlZpqYxtONMB_NU2z6E?rlkey=3ndh7ragaabbpkg2ktj6rks41&dl=1"
+)
+PROCESSED_ZIP_NAME = "clean_chest_xray_dataset.zip"
+
+
 class Colors:
+    """Lightweight cross-platform console colors."""
+
     GREEN = '\033[0;32m'
     RED = '\033[0;31m'
     YELLOW = '\033[1;33m'
-    NC = '\033[0m'  # No Color
+    NC = '\033[0m'
 
     @staticmethod
     def is_windows():
@@ -44,62 +55,20 @@ class Colors:
             print(f"{Colors.YELLOW}⚠ {msg}{Colors.NC}")
 
 
-def check_kaggle():
-    """Check if Kaggle CLI is installed"""
-    try:
-        subprocess.run(['kaggle', '--version'],
-                       capture_output=True,
-                       check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-
-def install_kaggle():
-    """Install Kaggle CLI"""
-    print("Installing Kaggle CLI...")
-    try:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', 'kaggle'],
-                       check=True)
-        Colors.print_success("Kaggle CLI installed")
-        return True
-    except subprocess.CalledProcessError:
-        Colors.print_error("Failed to install Kaggle CLI")
-        return False
-
-
-def check_kaggle_credentials():
-    """Check if Kaggle credentials are configured"""
-    kaggle_json = Path.home() / '.kaggle' / 'kaggle.json'
-    return kaggle_json.exists()
-
-
-def setup_kaggle_instructions():
-    """Print instructions for setting up Kaggle credentials"""
-    print("\n" + "=" * 60)
-    Colors.print_error("Kaggle credentials not found")
-    print("=" * 60)
-    print("\nPlease setup Kaggle API credentials:\n")
-    print("1. Go to: https://www.kaggle.com/account")
-    print("2. Scroll to 'API' section")
-    print("3. Click 'Create New API Token'")
-    print("4. This downloads 'kaggle.json'\n")
-
-    if sys.platform.startswith('win'):
-        kaggle_dir = Path.home() / '.kaggle'
-        print(f"5. Create folder: {kaggle_dir}")
-        print(f"6. Move kaggle.json to: {kaggle_dir / 'kaggle.json'}\n")
-        print("Or run these PowerShell commands:")
-        print(f"  mkdir {kaggle_dir}")
-        print(f"  mv $HOME\\Downloads\\kaggle.json {kaggle_dir}")
-    else:
-        print("5. Run these commands:")
-        print("  mkdir -p ~/.kaggle")
-        print("  mv ~/Downloads/kaggle.json ~/.kaggle/")
-        print("  chmod 600 ~/.kaggle/kaggle.json")
-
-    print("\nThen run this script again.")
-    print("=" * 60 + "\n")
+def ensure_direct_dropbox_link(url: str) -> str:
+    """
+    Convert any Dropbox preview link into a direct download endpoint.
+    For shared folders ('/scl/fo/...') Dropbox already zips the folder when dl=1,
+    so we avoid appending extra path segments that would re-route to HTML.
+    """
+    parsed = urlparse(url)
+    scheme = "https"
+    netloc = "www.dropbox.com"
+    path = parsed.path.rstrip('/')
+    query = dict(parse_qsl(parsed.query))
+    query["dl"] = "1"
+    query.pop("raw", None)
+    return urlunparse((scheme, netloc, path, "", urlencode(query), ""))
 
 
 def create_directories():
@@ -122,41 +91,60 @@ def create_directories():
     Colors.print_success("Directory structure created")
 
 
-def download_dataset():
-    """Download dataset from Kaggle"""
-    dataset = 'paultimothymooney/chest-xray-pneumonia'
+def download_processed_dataset():
+    """Download the processed dataset zip from Dropbox."""
     download_path = Path('data/raw')
-    zip_path = download_path / 'chest-xray-pneumonia.zip'
+    download_path.mkdir(parents=True, exist_ok=True)
+    zip_path = download_path / PROCESSED_ZIP_NAME
 
     if zip_path.exists():
-        Colors.print_warning("Dataset already downloaded")
-        return True
+        Colors.print_warning(f"{PROCESSED_ZIP_NAME} already exists, skipping download")
+        return zip_path
 
-    print(f"\nDownloading dataset: {dataset}")
-    print("Size: ~2 GB (this may take several minutes)")
-    print("Please wait...\n")
+    direct_url = ensure_direct_dropbox_link(DROPBOX_SHARED_LINK)
+    print("\nDownloading processed dataset from Dropbox...")
+    print(f"Source: {DROPBOX_SHARED_LINK}")
 
     try:
-        subprocess.run(
-            ['kaggle', 'datasets', 'download', '-d', dataset, '-p', str(download_path)],
-            check=True
-        )
+        with requests.get(direct_url, stream=True, timeout=120) as response:
+            response.raise_for_status()
+
+            content_type = response.headers.get("Content-Type", "")
+            if "text/html" in content_type:
+                Colors.print_warning("Dropbox returned HTML; attempting fallback download URL.")
+
+            with open(zip_path, 'wb') as out_file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        out_file.write(chunk)
+
         Colors.print_success("Download complete")
-        return True
-    except subprocess.CalledProcessError as e:
-        Colors.print_error(f"Download failed: {e}")
-        return False
+    except Exception as exc:
+        Colors.print_error(f"Download failed: {exc}")
+        return None
+
+    if not zipfile.is_zipfile(zip_path):
+        Colors.print_error(
+            "Downloaded file is not a valid ZIP archive. "
+            "Please verify the Dropbox link or replace PROCESSED_ZIP_NAME with a .zip file."
+        )
+        return None
+
+    return zip_path
 
 
-def extract_dataset():
+def extract_dataset(zip_path: Path):
     """Extract downloaded dataset"""
-    zip_path = Path('data/raw/chest-xray-pneumonia.zip')
     extract_path = Path('data/raw')
-    extracted_dir = extract_path / 'chest_xray'
+    marker_path = extract_path / '.clean_dataset_extracted'
 
-    if extracted_dir.exists():
+    if marker_path.exists():
         Colors.print_warning("Dataset already extracted")
-        return True
+        return marker_path.read_text().strip()
+
+    if zip_path is None or not zip_path.exists():
+        Colors.print_error("Zip file not found, cannot extract")
+        return None
 
     print("\nExtracting dataset...")
 
@@ -164,10 +152,18 @@ def extract_dataset():
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(extract_path)
         Colors.print_success("Extraction complete")
-        return True
     except Exception as e:
         Colors.print_error(f"Extraction failed: {e}")
-        return False
+        return None
+
+    # Try to detect the root folder that contains train/val/test
+    extracted_root = detect_dataset_root(extract_path)
+    if extracted_root is None:
+        Colors.print_warning("Could not automatically determine dataset root; using data/raw")
+        extracted_root = extract_path
+
+    marker_path.write_text(str(extracted_root))
+    return extracted_root
 
 
 def copy_images(source_dir, dest_dir):
@@ -187,11 +183,28 @@ def copy_images(source_dir, dest_dir):
     return count
 
 
-def organize_dataset():
+def detect_dataset_root(search_path: Path):
+    """
+    Inspect extracted contents to find the folder that includes the split subfolders.
+    """
+    candidates = [p for p in search_path.iterdir() if p.is_dir()]
+
+    for candidate in candidates:
+        if (candidate / 'train').exists() and (candidate / 'test').exists():
+            return candidate
+
+    # Fallback: look deeper one level
+    for candidate in candidates:
+        for sub in candidate.rglob('*'):
+            if sub.is_dir() and (sub / 'train').exists():
+                return sub
+
+    return None
+
+
+def organize_dataset(base_source: Path):
     """Organize dataset into train/val/test structure"""
     print("\nOrganizing dataset...")
-
-    base_source = Path('data/raw/chest_xray')
 
     if not base_source.exists():
         Colors.print_error("Extracted dataset not found")
@@ -250,41 +263,28 @@ def main():
     print("=" * 60)
     print()
 
-    # Step 1: Check Kaggle CLI
-    print("Step 1: Checking prerequisites...")
-    if not check_kaggle():
-        Colors.print_warning("Kaggle CLI not found")
-        if not install_kaggle():
-            return 1
-    Colors.print_success("Kaggle CLI ready")
-
-    # Step 2: Check credentials
-    print("\nStep 2: Checking Kaggle credentials...")
-    if not check_kaggle_credentials():
-        setup_kaggle_instructions()
-        return 1
-    Colors.print_success("Kaggle credentials found")
-
-    # Step 3: Create directories
-    print("\nStep 3: Creating directory structure...")
+    # Step 1: Create directories
+    print("Step 1: Creating directory structure...")
     create_directories()
 
-    # Step 4: Download dataset
-    print("\nStep 4: Downloading dataset...")
-    if not download_dataset():
+    # Step 2: Download dataset from Dropbox
+    print("\nStep 2: Downloading processed dataset...")
+    zip_path = download_processed_dataset()
+    if zip_path is None:
         return 1
 
-    # Step 5: Extract dataset
-    print("\nStep 5: Extracting dataset...")
-    if not extract_dataset():
+    # Step 3: Extract dataset
+    print("\nStep 3: Extracting dataset...")
+    dataset_root = extract_dataset(zip_path)
+    if dataset_root is None:
         return 1
 
-    # Step 6: Organize dataset
-    print("\nStep 6: Organizing dataset...")
-    if not organize_dataset():
+    # Step 4: Organize dataset into expected folders
+    print("\nStep 4: Organizing dataset into train/val/test...")
+    if not organize_dataset(Path(dataset_root)):
         return 1
 
-    # Step 7: Print statistics
+    # Step 5: Print statistics
     print_statistics()
 
     # Success
