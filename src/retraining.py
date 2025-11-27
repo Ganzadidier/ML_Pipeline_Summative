@@ -355,100 +355,169 @@ def load_dataset_from_database():
 
 def retrain_random_forest(X_train, y_train, X_val, y_val, class_names, job_id, existing_model=None):
     """
-    Retrain Random Forest classifier
-    RUBRIC: "Retraining - The student uses a custom model created as a pre-trained model"
+    Retrain Random Forest classifier by COMBINING old training data with new data
+    This preserves the original model's knowledge!
     """
     print("\n" + "=" * 70)
     print("RETRAINING RANDOM FOREST CLASSIFIER")
     print("=" * 70)
 
-    # Step 1: Initialize or load model
-    if existing_model is not None:
-        print("\n1️⃣ Using existing pre-trained Random Forest model...")
-        rf = existing_model
-        print("✓ Using pre-loaded model")
+    # Step 1: Load the original pre-trained model
+    model_path = find_rf_model()
+
+    if model_path and os.path.exists(model_path):
+        print(f"\n1️⃣ Loading ORIGINAL pre-trained model from {model_path}...")
+        original_model = load(model_path)
+        print("✓ Original model loaded successfully")
+
+        # Get baseline accuracy on new data
+        initial_val_acc = original_model.score(X_val, y_val)
+        print(f"\n📊 Original model accuracy on NEW data: {initial_val_acc:.4f}")
+
     else:
-        model_path = find_rf_model()
+        print("\n⚠️ No pre-trained model found. Training from scratch...")
+        original_model = None
+        initial_val_acc = 0.0
 
-        if model_path and os.path.exists(model_path):
-            print(f"\n1️⃣ Loading pre-trained Random Forest model from {model_path}...")
-            rf = load(model_path)
-            print("✓ Model loaded successfully")
-        else:
-            print("\n1️⃣ Creating new Random Forest model...")
-            rf = RandomForestClassifier(
-                n_estimators=500,
-                max_depth=30,
-                min_samples_split=5,
-                min_samples_leaf=2,
-                max_features='sqrt',
-                class_weight='balanced',
-                random_state=42,
-                n_jobs=-1,
-                bootstrap=True,
-                oob_score=True
-            )
-            print("✓ New model initialized")
+    # Step 2: Load ORIGINAL training data (if it exists)
+    original_data_path = os.path.join(MODEL_DIR, "original_training_data.npz")
 
-    # Step 2: Train the model
-    print(f"\n2️⃣ Training on {len(X_train)} samples...")
-    rf.fit(X_train, y_train)
+    if os.path.exists(original_data_path):
+        print(f"\n2️⃣ Loading ORIGINAL training data...")
+        original_data = np.load(original_data_path)
+        X_original = original_data['X']
+        y_original = original_data['y']
+        print(f"✓ Loaded {len(X_original)} original training samples")
+
+        # Combine original + new data
+        print(f"\n3️⃣ Combining original and new data...")
+        X_combined = np.vstack([X_original, X_train])
+        y_combined = np.concatenate([y_original, y_train])
+        print(f"✓ Combined dataset: {len(X_combined)} samples")
+        print(f"  - Original: {len(X_original)} samples")
+        print(f"  - New: {len(X_train)} samples")
+
+    else:
+        print(f"\n2️⃣ No original training data found. Using only new data...")
+        X_combined = X_train
+        y_combined = y_train
+
+        # Save this as the "original" data for future retraining
+        print("✓ Saving current data as baseline for future retraining...")
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        np.savez(original_data_path, X=X_train, y=y_train)
+
+    # Step 3: Create new model with same hyperparameters as original
+    print(f"\n4️⃣ Training Random Forest on combined data...")
+
+    if original_model is not None:
+        # Use same hyperparameters as original model
+        rf = RandomForestClassifier(
+            n_estimators=original_model.n_estimators,
+            max_depth=original_model.max_depth,
+            min_samples_split=original_model.min_samples_split,
+            min_samples_leaf=original_model.min_samples_leaf,
+            max_features=original_model.max_features,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+            bootstrap=True,
+            oob_score=True
+        )
+        print(f"✓ Using original hyperparameters:")
+        print(f"  - n_estimators: {original_model.n_estimators}")
+        print(f"  - max_depth: {original_model.max_depth}")
+    else:
+        # Default hyperparameters
+        rf = RandomForestClassifier(
+            n_estimators=500,
+            max_depth=30,
+            min_samples_split=5,
+            min_samples_leaf=2,
+            max_features='sqrt',
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+            bootstrap=True,
+            oob_score=True
+        )
+
+    # Train on COMBINED data
+    rf.fit(X_combined, y_combined)
     print("✓ Training complete!")
 
-    # Step 3: Evaluate
-    print("\n3️⃣ Evaluating model...")
+    # Step 4: Evaluate
+    print("\n5️⃣ Evaluating retrained model...")
 
-    train_acc = rf.score(X_train, y_train)
+    train_acc = rf.score(X_combined, y_combined)
     val_acc = rf.score(X_val, y_val)
-
     val_preds = rf.predict(X_val)
 
     print(f"\n📊 Performance Metrics:")
-    print(f"  Training Accuracy:   {train_acc:.4f}")
-    print(f"  Validation Accuracy: {val_acc:.4f}")
+    if original_model is not None:
+        print(f"  Original model (on new data): {initial_val_acc:.4f}")
+        improvement = val_acc - initial_val_acc
+        print(f"  Retrained model (on new data): {val_acc:.4f} ({improvement:+.4f})")
+    else:
+        print(f"  Training Accuracy:   {train_acc:.4f}")
+        print(f"  Validation Accuracy: {val_acc:.4f}")
+
     if hasattr(rf, 'oob_score_'):
         print(f"  OOB Score:          {rf.oob_score_:.4f}")
 
     print(f"\n📋 Classification Report:")
     print(classification_report(y_val, val_preds, target_names=class_names))
 
-    # Step 4: Save model
-    print("\n4️⃣ Saving retrained model...")
-    os.makedirs(MODEL_DIR, exist_ok=True)
+    # Step 5: Save ONLY if performance improved OR no original model exists
+    should_save = True
 
-    save_path = CUSTOM_PRETRAINED_MODEL_PATH
+    if original_model is not None and val_acc < initial_val_acc:
+        print(f"\n⚠️  WARNING: Retrained model is WORSE than original!")
+        print(f"   Original: {initial_val_acc:.4f}")
+        print(f"   Retrained: {val_acc:.4f}")
+        print(f"   Keeping ORIGINAL model...")
+        should_save = False
 
-    # Backup old model
-    if os.path.exists(save_path):
-        backup_path = save_path.replace('.pkl', f'_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pkl')
-        shutil.copy2(save_path, backup_path)
-        print(f"✓ Backed up old model: {os.path.basename(backup_path)}")
+    if should_save:
+        print("\n6️⃣ Saving improved model...")
+        os.makedirs(MODEL_DIR, exist_ok=True)
 
-    # Save new model
-    dump(rf, save_path)
-    print(f"✓ Saved retrained model: {save_path}")
+        save_path = CUSTOM_PRETRAINED_MODEL_PATH
 
-    # Save metadata
-    metadata = {
-        'timestamp': datetime.now().isoformat(),
-        'n_estimators': rf.n_estimators,
-        'train_samples': len(X_train),
-        'val_samples': len(X_val),
-        'train_accuracy': float(train_acc),
-        'val_accuracy': float(val_acc),
-        'class_names': class_names
-    }
+        # Save new model (no backup step)
+        dump(rf, save_path)
+        print(f"✓ Saved retrained model: {save_path}")
 
-    metadata_path = os.path.join(MODEL_DIR, "model_metadata.json")
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    print(f"✓ Saved metadata: {metadata_path}")
+        # Update original training data with combined data
+        np.savez(original_data_path, X=X_combined, y=y_combined)
+        print(f"✓ Updated training data archive")
 
-    print("\n✓ Model deployed to production!")
+        # Save metadata
+        metadata = {
+            'timestamp': datetime.now().isoformat(),
+            'n_estimators': rf.n_estimators,
+            'train_samples': len(X_combined),
+            'val_samples': len(X_val),
+            'train_accuracy': float(train_acc),
+            'val_accuracy': float(val_acc),
+            'initial_accuracy': float(initial_val_acc),
+            'improvement': float(val_acc - initial_val_acc),
+            'class_names': class_names
+        }
+
+        metadata_path = os.path.join(MODEL_DIR, "model_metadata.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        print(f"✓ Saved metadata: {metadata_path}")
+
+        print("\n✓ Model deployed to production!")
+    else:
+        print("\n⚠️  Keeping original model (no improvement)")
+        val_acc = initial_val_acc  # Return original accuracy
+
     print("=" * 70 + "\n")
 
     return val_acc
-
 
 def trigger_retraining(job_id=None, existing_model=None):
     """
