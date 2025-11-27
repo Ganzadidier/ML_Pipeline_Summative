@@ -32,13 +32,23 @@ Want to explore the UI before running locally? The current Render deployment is 
 
 [Live Demo (Render)](https://ml-pipeline-summative-ls9d.onrender.com)
 
+
 The hosted version lets you click through the dashboard, prediction, retraining, and visualization tabs to understand the expected behavior before you set up the project locally. [^render]
 
 [^render]: Deployment reference: https://ml-pipeline-summative-ls9d.onrender.com
 
 ---
 
-## 4. Download the Chest X-ray Dataset
+## 4. Load Testing Snapshot
+The API was stress-tested with Locust to verify `/predict`, `/metrics`, `/health`, and visualization endpoints under burst workloads. Screenshot below shows aggregate latency and request distribution during a “flood” simulation.
+
+![Locust flood-test dashboard](Locust_screenshot.png)
+
+To reproduce, run `locust -f locustfile.py` and point the web UI at `http://127.0.0.1:5000`.
+
+---
+
+## 5. Download the Chest X-ray Dataset
 Run the helper script from the project root:
 ```bash
 python download_dataset.py
@@ -56,7 +66,7 @@ Prefer to download manually? Grab the same archive from Dropbox and unzip it ins
 
 ---
 
-## 5. Install Python Dependencies
+## 6. Install Python Dependencies
 After the dataset step completes, install the required libraries:
 ```bash
 pip install --upgrade pip
@@ -65,7 +75,7 @@ pip install -r requirements.txt
 
 ---
 
-## 6. Prepare / Verify Random Forest Model
+## 7. Prepare / Verify Random Forest Model
 The Flask API expects a trained Random Forest pickle at one of:
 - `notebooks/random_forest_hog.pkl`
 - `models/random_forest_hog.pkl`
@@ -87,7 +97,7 @@ Ensure the resulting `.pkl` is copied to one of the paths above.
 
 ---
 
-## 7. Running the Flask App
+## 8. Running the Flask App
 From the repo root with the virtualenv active:
 ```bash
 python app.py
@@ -106,14 +116,14 @@ Open the following routes in your browser:
 
 ---
 
-## 8. Optional: Batch / API Usage
+## 9. Optional: Batch / API Usage
 - `POST /predict` with `multipart/form-data` (`file=<image>`) returns prediction JSON
 - `POST /predict-batch` with `files=<image1> ...` handles multiple uploads
 - `GET /metrics`, `/model-status`, `/health` expose runtime statistics
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 - **Model not loaded:** make sure the `.pkl` exists in one of the searched paths.
 - **OpenCV import error:** install missing OS packages (on Ubuntu: `sudo apt install libgl1`).
 - **Kaggle auth failure:** confirm `kaggle.json` permissions (chmod 600 on *nix).
