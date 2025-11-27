@@ -4,6 +4,11 @@ Fast Flask application that classifies chest X-rays as `NORMAL` or `PNEUMONIA` u
 
 ---
 
+## Video link for demonstration
+- https://youtu.be/tdbWlVpHlP8 
+
+
+
 ## 1. Prerequisites
 - Python 3.10+ (recommended)
 - pip / venv (or other virtual env manager)
